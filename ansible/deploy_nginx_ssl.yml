@@ -106,17 +106,6 @@
         msg: "Le fichier de configuration Nginx n'est pas présent !"
       when: not nginx_config.stat.exists
 
-    - name: Vérifier que la config Nginx est bien copiée
-      stat:
-        path: /etc/nginx/conf.d/default.conf
-      register: nginx_config
-
-    - name: Afficher un message si le fichier est absent
-      debug:
-        msg: "Le fichier de configuration Nginx n'est pas présent !"
-      when: not nginx_config.stat.exists
-
-
   handlers:
     - name: Restart Nginx
       command: docker exec nginx_ssl nginx -s reload
