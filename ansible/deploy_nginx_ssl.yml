@@ -1,0 +1,122 @@
+---
+- name: Déployer un serveur web avec Ansible dans un conteneur Docker avec SSL auto-signé
+  hosts: localhost
+  become: yes
+
+  tasks:
+    - name: Installer Docker et OpenSSL
+      apt:
+        name:
+          - docker.io
+          - openssl
+        state: present
+
+    - name: Démarrer Docker
+      service:
+        name: docker
+        state: started
+        enabled: yes
+
+    - name: S'assurer que le réseau Docker "web_network" existe
+      docker_network:
+        name: web_network
+        state: present
+
+    - name: Vérifier si le certificat existe déjà
+      stat:
+        path: /etc/ssl/certs/yucelsan.local.crt
+      register: cert_status
+
+    - name: Créer le répertoire des certificats
+      file:
+        path: /etc/nginx/ssl
+        state: directory
+        mode: '0755'
+
+    - name: Générer un certificat SSL auto-signé si absent
+      command: >
+        openssl req -x509 -nodes -days 365 -newkey rsa:2048
+        -keyout /etc/nginx/ssl/yucelsan.local.key
+        -out /etc/nginx/ssl/yucelsan.local.crt
+        -subj "/C=FR/ST=ARA/L=LYON/O=LocalCert/OU=Dev/CN=yucelsan.local"
+      args:
+        creates: /etc/nginx/ssl/yucelsan.local.crt
+      when: not cert_status.stat.exists
+
+    - name: Vérifier que les certificats sont bien présents
+      stat:
+        path: /etc/nginx/ssl/yucelsan.local.crt
+      register: cert_check
+
+    - name: Afficher un message si le certificat est bien généré
+      debug:
+        msg: "Le certificat SSL auto-signé a été généré avec succès !"
+      when: cert_check.stat.exists
+
+    - name: Copier la configuration SSL pour Nginx
+      command: >
+        sh -c "echo '
+        server {
+          listen 8083;
+          server_name localhost;
+          location / {
+              root /var/www/html;
+              index index.nginx-debian.html;
+            }
+          }
+        server {
+          listen 443 ssl;
+          server_name localhost;
+          ssl_certificate /etc/nginx/ssl/yucelsan.local.crt;
+          ssl_certificate_key /etc/nginx/ssl/yucelsan.local.key;
+          location / {
+              root /var/www/html;
+              index index.nginx-debian.html;
+            }
+          }' > /etc/nginx/conf.d/default.conf"
+      notify: Restart Nginx
+
+    - name: Déployer un conteneur Nginx avec SSL auto-signé
+      docker_container:
+        name: nginx_ssl
+        image: nginx
+        state: started
+        restart_policy: always
+        ports:
+          - "8387:8083"
+          - "443:443"
+        networks:
+          - name: web_network
+        volumes:
+          - /etc/nginx/ssl:/etc/nginx/ssl:ro
+          - /etc/nginx/conf.d:/etc/nginx/conf.d:ro
+          - /var/www/html:/usr/share/nginx/html
+
+    - name: Vérifier que le conteneur peut lire les certificats
+      command: docker exec nginx_ssl ls -l /etc/nginx/ssl
+      ignore_errors: yes
+
+    - name: Vérifier que la config Nginx est bien copiée
+      stat:
+        path: /etc/nginx/conf.d/default.conf
+      register: nginx_config
+
+    - name: Afficher un message si le fichier est absent
+      debug:
+        msg: "Le fichier de configuration Nginx n'est pas présent !"
+      when: not nginx_config.stat.exists
+
+    - name: Vérifier que la config Nginx est bien copiée
+      stat:
+        path: /etc/nginx/conf.d/default.conf
+      register: nginx_config
+
+    - name: Afficher un message si le fichier est absent
+      debug:
+        msg: "Le fichier de configuration Nginx n'est pas présent !"
+      when: not nginx_config.stat.exists
+
+
+  handlers:
+    - name: Restart Nginx
+      command: docker exec nginx_ssl nginx -s reload
